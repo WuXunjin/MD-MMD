@@ -1,4 +1,4 @@
-#zcoding=utf-8
+#zzcoding=utf-8
 
 from torch import nn, autograd
 from torchvision import models
@@ -38,8 +38,7 @@ class AlexNetExtractor(nn.Module):
     def get_param_groups(self, learning_rate):
         param_groups = [
                 {"params": self.features.parameters(), "lr": learning_rate},
-                {"params": self.avgpool.parameters(), "lr": learning_rate}
-                ]
+                {"params": self.avgpool.parameters(), "lr": learning_rate}]
         return param_groups
 
 class ResNet18Extractor(nn.Module):
@@ -77,8 +76,7 @@ class ResNet18Extractor(nn.Module):
         param_groups = [
                 {"params": self.layer3.parameters(),  "lr": learning_rate},
                 {"params": self.layer4.parameters(),  "lr": learning_rate},
-                {"params": self.avgpool.parameters(), "lr": learning_rate},
-                ]
+                {"params": self.avgpool.parameters(), "lr": learning_rate}]
         return param_groups
 
 
@@ -117,8 +115,7 @@ class ResNet34Extractor(nn.Module):
         param_groups = [
                 {"params": self.layer3.parameters(),  "lr": learning_rate},
                 {"params": self.layer4.parameters(),  "lr": learning_rate},
-                {"params": self.avgpool.parameters(), "lr": learning_rate},
-                ]
+                {"params": self.avgpool.parameters(), "lr": learning_rate}]
         return param_groups
 
 
@@ -157,8 +154,7 @@ class ResNet50Extractor(nn.Module):
         param_groups = [
                 {"params": self.layer3.parameters(),  "lr": learning_rate},
                 {"params": self.layer4.parameters(),  "lr": learning_rate},
-                {"params": self.avgpool.parameters(), "lr": learning_rate},
-                ]
+                {"params": self.avgpool.parameters(), "lr": learning_rate}]
         return param_groups
 
 
@@ -197,8 +193,7 @@ class ResNet101Extractor(nn.Module):
         param_groups = [
                 {"params": self.layer3.parameters(),  "lr": learning_rate},
                 {"params": self.layer4.parameters(),  "lr": learning_rate},
-                {"params": self.avgpool.parameters(), "lr": learning_rate},
-                ]
+                {"params": self.avgpool.parameters(), "lr": learning_rate}]
         return param_groups
 
 
@@ -237,8 +232,7 @@ class ResNet152Extractor(nn.Module):
         param_groups = [
                 {"params": self.layer3.parameters(),  "lr": learning_rate},
                 {"params": self.layer4.parameters(),  "lr": learning_rate},
-                {"params": self.avgpool.parameters(), "lr": learning_rate},
-                ]
+                {"params": self.avgpool.parameters(), "lr": learning_rate}]
         return param_groups
 
 
