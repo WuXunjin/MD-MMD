@@ -7,9 +7,11 @@ from torch.utils.data import ConcatDataset, DataLoader, random_split
 def office31_loader(cfg, val=True):
     img_size = 299 if cfg.network == "inception" else 224
     src_transform = transforms.Compose([
-        transforms.RandomResizedCrop(img_size),
+        transforms.Resize([256,256]),
+        transforms.RandomCrop(224),
+        #transforms.RandomResizedCrop(img_size),
         transforms.RandomHorizontalFlip(),
-        transforms.RandomVerticalFlip(),
+        #transforms.RandomVerticalFlip(),
         transforms.ToTensor(),
         transforms.Normalize(
             mean=[0.485, 0.456, 0.406],
