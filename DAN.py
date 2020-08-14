@@ -5,7 +5,8 @@ import time
 import torch
 from torch import nn, optim
 from data_loader import data_loader_dict
-from utils import inv_lr_scheduler
+from utils import inv_lr_scheduler, cos_lr_scheduler
+
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available else "cpu")
 
@@ -48,11 +49,17 @@ class DAN(): # based on ResNet 50
         MMD_ciriterion = MMDLoss()
 
         #optimizer
-        optimizer = optim.SGD(
+        #optimizer = optim.SGD(
+        #        self.features.get_param_groups(self.cfg.learning_rate) +
+        #        self.classifier.get_param_groups(self.cfg.new_layer_learning_rate),
+        #        momentum=self.cfg.momentum)
+        optimizer = optim.Adam(
                 self.features.get_param_groups(self.cfg.learning_rate) +
                 self.classifier.get_param_groups(self.cfg.new_layer_learning_rate),
-                momentum=self.cfg.momentum)
+                weight_decay = 0.01)
 
+        #scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=50, gamma=0.7)
+        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=self.cfg.max_iter)
 
         # train
         best_src_acc, best_tar_acc = 0.0, 0.0
@@ -62,6 +69,8 @@ class DAN(): # based on ResNet 50
         move_factor = 0.9
         for _iter in range(self.cfg.max_iter):
             #inv_lr_scheduler(optimizer, _iter)
+            scheduler.step()
+            #cos_lr_scheduler(optimizer, _iter, self.cfg.max_iter)
             if _iter % src_iter_len == 0:
                 src_iter = iter(src_loader)
 
@@ -108,7 +117,7 @@ class DAN(): # based on ResNet 50
 
             #loss = classifier_loss
             loss = classifier_loss + \
-                   entropy_loss * self.cfg.entropy_loss_weight + \
+                   entropy_loss * self.cfg.entropy_loss_weight * (self.cfg.max_iter - _iter) / self.cfg.max_iter + \
                    MMD_loss * self.cfg.MMD_loss_weight
 
             # optimize
