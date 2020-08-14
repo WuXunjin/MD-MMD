@@ -15,15 +15,16 @@ class EntropyLoss(nn.Module):
     def __init__(self):
         super(EntropyLoss, self).__init__()
     def forward(self, x):
-        entropy =  -(nn.functional.softmax(x, dim=1) * nn.functional.log_softmax(x, dim=1)).mean()
+        entropy = -(nn.functional.softmax(x, dim=1) * nn.functional.log_softmax(x, dim=1)).mean()
         return entropy
 
 class MMDLoss(nn.Module):
-    def __init__(self, kernel_mul=2.0, kernel_num=5, fix_sigma=None):
+    def __init__(self, kernel_mul=2.0, kernel_num=5, fix_sigma=None, mmd_type="mmd"):
         super(MMDLoss, self).__init__()
         self.kernel_mul = 2.0
         self.kernel_num = kernel_num
         self.fix_sigma  = fix_sigma
+        self.mmd_type = mmd_type
 
     def guassian_kernel(self, src_features, tar_features):
         n_samples = int(src_features.size()[0] + tar_features.size()[0])
@@ -64,8 +65,10 @@ class MMDLoss(nn.Module):
         return loss / float(batch_size)
 
     def forward(self, src_features, tar_features):
-        return self.mmd(src_features, tar_features)
-        #return self.mmd_linear(src_features, tar_features)
+        if self.mmd_type == "mmd":
+            return self.mmd(src_features, tar_features)
+        elif self.mmd_type == "mmd_linear":
+            return self.mmd_linear(src_features, tar_features)
 
 class DAN(): # based on ResNet 50
     def __init__(self, cfg):
@@ -120,26 +123,26 @@ class DAN(): # based on ResNet 50
                 src_iter = iter(src_loader)
 
                 epoch_src_acc = epoch_src_correct / (src_iter_len * self.cfg.batch_size)
+                if epoch_src_acc > best_src_acc:
+                    best_src_acc = epoch_src_acc
+
                 print("\n" + "-" * 80)
                 print("Iter[{:02d}/{:03d}] Acc[src: {:.4f}, tar: {:.4f}] Best Acc[src: {:.4f}, tar: {:.4f}]".format(
                     _iter, self.cfg.max_iter, epoch_src_acc, epoch_tar_acc, best_src_acc, best_tar_acc))
                 print("-" * 80 + "\n")
-
-                if epoch_src_acc > best_src_acc:
-                    best_src_acc = epoch_src_acc
                 epoch_src_correct = 0.0
 
             if _iter % tar_iter_len == 0:
                 tar_iter = iter(tar_loader)
 
                 epoch_tar_acc = epoch_tar_correct / (tar_iter_len * self.cfg.batch_size)
+                if epoch_tar_acc > best_tar_acc:
+                    best_tar_acc = epoch_tar_acc
+
                 print("\n" + "-" * 80)
                 print("Iter[{:02d}/{:03d}] Acc[src: {:.4f}, tar: {:.4f}] Best Acc[src: {:.4f}, tar: {:.4f}]".format(
                     _iter, self.cfg.max_iter, epoch_src_acc, epoch_tar_acc, best_src_acc, best_tar_acc))
                 print("-" * 80 + "\n")
-
-                if epoch_tar_acc > best_tar_acc:
-                    best_tar_acc = epoch_tar_acc
                 epoch_tar_correct = 0.0
 
 
@@ -160,8 +163,8 @@ class DAN(): # based on ResNet 50
             entropy_loss = entropy_ciriterion(tar_outputs)
             MMD_loss = MMD_ciriterion(src_features, tar_features)
 
-            loss_factor = 2.0 / (1.0 + math.exp(-10 * _iter / self.cfg.max_iter)) - 1.0
-            #loss_factor = 1.0
+            #loss_factor = 2.0 / (1.0 + math.exp(-10 * _iter / self.cfg.max_iter)) - 1.0
+            loss_factor = 1.0
             loss = classifier_loss + \
                    entropy_loss * self.cfg.entropy_loss_weight * loss_factor + \
                    MMD_loss * self.cfg.MMD_loss_weight * loss_factor
