@@ -63,7 +63,7 @@ class ResNet18Extractor(nn.Module):
             x = self.maxpool(x)
             x = self.layer1(x)
             x = self.layer2(x)
-        x = self.layer3(x)
+            x = self.layer3(x)
         x = self.layer4(x)
         x = self.avgpool(x)
         x = x.view(x.shape[0], -1)
@@ -73,10 +73,7 @@ class ResNet18Extractor(nn.Module):
         return 512
 
     def get_param_groups(self, learning_rate):
-        param_groups = [
-                {"params": self.layer3.parameters(),  "lr": learning_rate},
-                {"params": self.layer4.parameters(),  "lr": learning_rate},
-                {"params": self.avgpool.parameters(), "lr": learning_rate}]
+        param_groups = [{"params": self.layer4.parameters(),  "lr": learning_rate}]
         return param_groups
 
 
@@ -102,7 +99,7 @@ class ResNet34Extractor(nn.Module):
             x = self.maxpool(x)
             x = self.layer1(x)
             x = self.layer2(x)
-        x = self.layer3(x)
+            x = self.layer3(x)
         x = self.layer4(x)
         x = self.avgpool(x)
         x = x.view(x.shape[0], -1)
@@ -112,10 +109,7 @@ class ResNet34Extractor(nn.Module):
         return 512
 
     def get_param_groups(self, learning_rate):
-        param_groups = [
-                {"params": self.layer3.parameters(),  "lr": learning_rate},
-                {"params": self.layer4.parameters(),  "lr": learning_rate},
-                {"params": self.avgpool.parameters(), "lr": learning_rate}]
+        param_groups = [{"params": self.layer4.parameters(),  "lr": learning_rate}]
         return param_groups
 
 
@@ -141,7 +135,7 @@ class ResNet50Extractor(nn.Module):
             x = self.maxpool(x)
             x = self.layer1(x)
             x = self.layer2(x)
-        x = self.layer3(x)
+            x = self.layer3(x)
         x = self.layer4(x)
         x = self.avgpool(x)
         x = x.view(x.shape[0], -1)
@@ -151,10 +145,7 @@ class ResNet50Extractor(nn.Module):
         return 2048
 
     def get_param_groups(self, learning_rate):
-        param_groups = [
-                {"params": self.layer3.parameters(),  "lr": learning_rate},
-                {"params": self.layer4.parameters(),  "lr": learning_rate},
-                {"params": self.avgpool.parameters(), "lr": learning_rate}]
+        param_groups = [{"params": self.layer4.parameters(),  "lr": learning_rate}]
         return param_groups
 
 
@@ -180,7 +171,7 @@ class ResNet101Extractor(nn.Module):
             x = self.maxpool(x)
             x = self.layer1(x)
             x = self.layer2(x)
-        x = self.layer3(x)
+            x = self.layer3(x)
         x = self.layer4(x)
         x = self.avgpool(x)
         x = x.view(x.shape[0], -1)
@@ -190,10 +181,7 @@ class ResNet101Extractor(nn.Module):
         return 2048
 
     def get_param_groups(self, learning_rate):
-        param_groups = [
-                {"params": self.layer3.parameters(),  "lr": learning_rate},
-                {"params": self.layer4.parameters(),  "lr": learning_rate},
-                {"params": self.avgpool.parameters(), "lr": learning_rate}]
+        param_groups = [{"params": self.layer4.parameters(),  "lr": learning_rate}]
         return param_groups
 
 
@@ -219,7 +207,7 @@ class ResNet152Extractor(nn.Module):
             x = self.maxpool(x)
             x = self.layer1(x)
             x = self.layer2(x)
-        x = self.layer3(x)
+            x = self.layer3(x)
         x = self.layer4(x)
         x = self.avgpool(x)
         x = x.view(x.shape[0], -1)
@@ -229,10 +217,7 @@ class ResNet152Extractor(nn.Module):
         return 2048
 
     def get_param_groups(self, learning_rate):
-        param_groups = [
-                {"params": self.layer3.parameters(),  "lr": learning_rate},
-                {"params": self.layer4.parameters(),  "lr": learning_rate},
-                {"params": self.avgpool.parameters(), "lr": learning_rate}]
+        param_groups = [{"params": self.layer4.parameters(),  "lr": learning_rate}]
         return param_groups
 
 
