@@ -70,14 +70,56 @@ class MMDLoss(nn.Module):
         elif self.mmd_type == "mmd_linear":
             return self.mmd_linear(src_features, tar_features)
 
-class DAN(): # based on ResNet 50
+class MD_MMD_Layer(nn.Module):
+    def __init__(self, in_features, out_features, latent_domain_num=2):
+        super(MD_MMD_Layer, self).__init__()
+        self.latent_domain_num = latent_domain_num
+        self.in_features = in_features
+        self.out_features = out_features
+        self.aux_classifier = nn.Sequential(
+            nn.Linear(self.in_features, self.latent_domain_num),
+            nn.Softmax()
+            )
+        self.layers = []
+        for i in range(self.latent_domain_num):
+            self.layers.append(nn.Linear(self.in_features, self.out_features).to(DEVICE))
+        self.MMD_ciriterion = MMDLoss()
+
+    def inter_MMD(self, outputs_list):
+        loss = 0.0
+        for i in range(self.latent_domain_num):
+            for j in range(i + 1, self.latent_domain_num):
+                loss += self.MMD_ciriterion(outputs_list[i], outputs_list[j])
+        return loss * 2.0 / (self.latent_domain_num ** 2 - self.latent_domain_num)
+
+    def forward(self, x):
+        #combine loss
+        batch_size = int(x.size()[0])
+        features_size = self.out_features
+        latent_domain_label = self.aux_classifier(x)
+        outputs = [layer(x) for layer in self.layers]
+        stack_outputs = torch.stack(outputs, dim=2)
+        expand_latent_domain_label = latent_domain_label.unsqueeze(1).expand(batch_size, features_size, self.latent_domain_num)
+        combine_outputs = (expand_latent_domain_label * stack_outputs).sum(2)
+        inter_MMD_loss = -self.inter_MMD(outputs)
+        return combine_outputs, inter_MMD_loss
+
+    def get_param_groups(self, learning_rate):
+        param_groups = [{"params": self.aux_classifier.parameters(), "lr": learning_rate}]
+        for layer in self.layers:
+            param_groups.append({"params": layer.parameters(), "lr": learning_rate})
+        return param_groups
+
+
+class MD_DAN(): # based on ResNet 50
     def __init__(self, cfg):
         self.cfg = cfg
 
         self.features = extractor_dict.ResNet50Extractor().to(DEVICE)
-        self.classifier = classifier_dict.SingleClassifier(
+        self.classifier = MD_MMD_Layer(
                 in_features=self.features.out_features(),
-                num_class=cfg.num_class).to(DEVICE)
+                out_features=cfg.num_class,
+                latent_domain_num=self.cfg.latent_domain_num).to(DEVICE)
 
     def train(self):
         start_time = time.time()
@@ -94,17 +136,11 @@ class DAN(): # based on ResNet 50
         entropy_ciriterion = EntropyLoss()
         MMD_ciriterion = MMDLoss()
 
-        #optimizer
-        #optimizer = optim.SGD(
-        #        self.features.get_param_groups(self.cfg.learning_rate) +
-        #        self.classifier.get_param_groups(self.cfg.new_layer_learning_rate),
-        #        momentum=self.cfg.momentum)
         optimizer = optim.Adam(
                 self.features.get_param_groups(self.cfg.learning_rate) +
                 self.classifier.get_param_groups(self.cfg.new_layer_learning_rate),
                 weight_decay = 0.01)
 
-        #scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=50, gamma=0.7)
         scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=self.cfg.max_iter)
 
         # train
@@ -116,8 +152,6 @@ class DAN(): # based on ResNet 50
         for _iter in range(self.cfg.max_iter):
             # lr scheduler
             scheduler.step()
-            #inv_lr_scheduler(optimizer, _iter)
-            #cos_lr_scheduler(optimizer, _iter, self.cfg.max_iter)
 
             if _iter % src_iter_len == 0:
                 src_iter = iter(src_loader)
@@ -154,20 +188,21 @@ class DAN(): # based on ResNet 50
 
             # forward
             src_features = self.features(X_src)
-            src_outputs  = self.classifier(src_features)
+            src_outputs, src_inter_MMD_loss  = self.classifier(src_features)
             tar_features = self.features(X_tar)
-            tar_outputs  = self.classifier(tar_features)
+            tar_outputs, tar_inter_MMD_loss  = self.classifier(tar_features)
 
             # loss
             classifier_loss = classifier_ciriterion(src_outputs, y_src)
             entropy_loss = entropy_ciriterion(tar_outputs)
-            MMD_loss = MMD_ciriterion(src_features, tar_features)
+            intra_MMD_loss = MMD_ciriterion(src_features, tar_features)
 
-            loss_factor = 2.0 / (1.0 + math.exp(-10 * _iter / self.cfg.max_iter)) - 1.0
-            #loss_factor = 1.0
+            #loss_factor = 2.0 / (1.0 + math.exp(-10 * _iter / self.cfg.max_iter)) - 1.0
+            loss_factor = 1.0
             loss = classifier_loss + \
                    entropy_loss * self.cfg.entropy_loss_weight * loss_factor + \
-                   MMD_loss * self.cfg.MMD_loss_weight * loss_factor
+                   intra_MMD_loss * self.cfg.intra_MMD_loss_weight * loss_factor + \
+                   (src_inter_MMD_loss + tar_inter_MMD_loss) * self.cfg.inter_MMD_loss_weight * loss_factor
 
             # optimize
             loss.backward()
@@ -181,22 +216,37 @@ class DAN(): # based on ResNet 50
             pred_tar = tar_outputs.argmax(dim=1)
             epoch_src_correct += (y_src == pred_src).double().sum().item()
             epoch_tar_correct += (y_tar == pred_tar).double().sum().item()
-            print("Iter[{:02d}/{:03d}] Loss[M-Ave: {:.4f}\titer:{:.4f}\tCla:{:.4f}\tEnt:{:.4f}\tMMD:{:.4f}]".format(
-                _iter, self.cfg.max_iter, move_average_loss, iter_loss, classifier_loss, entropy_loss, MMD_loss))
+            print("Iter[{:02d}/{:03d}] Loss[M-Ave:{:.4f}\titer:{:.4f}\tCla:{:.4f}\tEnt:{:.4f}".format(
+                _iter, self.cfg.max_iter, move_average_loss, iter_loss, classifier_loss, entropy_loss))
+            print("Iter[{:02d}/{:03d}] MMD-Loss[intra:{:.4f}\tinter_src:{:.4f}\tinter_src:{:.4f}\n".format(
+                _iter, self.cfg.max_iter, intra_MMD_loss, src_inter_MMD_loss, tar_inter_MMD_loss))
 
         time_pass = time.time() - start_time
         print("Train finish in {:.0f}m {:.0f}s".format(time_pass // 60, time_pass % 60))
+        return best_tar_acc
 
     def eval(self, x):
         pass
 
 
 def main():
-    from configs.DAN_config import cfg
+    from configs.MD_DAN_config import cfg
     print("configs:\n", cfg)
-    dan = DAN(cfg)
-    dan.train()
+    acc_dict = {}
+    ave = 0.0
+    for src in ["amazon", "webcam", "dslr"]:
+        for tar in ["amazon", "webcam", "dslr"]:
+            if src == tar:
+                continue
+            cfg.src, cfg.tar = [src], [tar]
+            dan = MD_DAN(cfg)
+            best_tar_acc = dan.train()
+            ave += best_tar_acc
+            acc_dict[src+"->"+"tar"] = best_tar_acc
     print("configs:\n", cfg)
+    print(acc_dict)
+    ave /= 6.0
+    print("ave acc", ave)
 
 
 if __name__ == "__main__":
