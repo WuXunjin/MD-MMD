@@ -7,68 +7,9 @@ import torch
 from torch import nn, optim
 from data_loader import data_loader_dict
 from utils import inv_lr_scheduler, cos_lr_scheduler
-
+from loss import EntropyLoss, MMDLoss, JMMDLoss
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available else "cpu")
-
-class EntropyLoss(nn.Module):
-    def __init__(self):
-        super(EntropyLoss, self).__init__()
-    def forward(self, x):
-        entropy = -(nn.functional.softmax(x, dim=1) * nn.functional.log_softmax(x, dim=1)).mean()
-        return entropy
-
-class MMDLoss(nn.Module):
-    def __init__(self, kernel_mul=2.0, kernel_num=5, fix_sigma=None, mmd_type="mmd"):
-        super(MMDLoss, self).__init__()
-        self.kernel_mul = 2.0
-        self.kernel_num = kernel_num
-        self.fix_sigma  = fix_sigma
-        self.mmd_type = mmd_type
-
-    def guassian_kernel(self, src_features, tar_features):
-        n_samples = int(src_features.size()[0] + tar_features.size()[0])
-        total = torch.cat([src_features, tar_features], dim=0)
-        double_batch = int(total.size()[0])
-        features_num = int(total.size()[1])
-        total0 = total.unsqueeze(0).expand(double_batch, double_batch, features_num)
-        total1 = total.unsqueeze(1).expand(double_batch, double_batch, features_num)
-        L2_distance = ((total0 - total1) ** 2).sum(2)
-        if self.fix_sigma:
-            bandwidth = self.fix_sigma
-        else:
-            bandwidth = torch.sum(L2_distance.data) / (n_samples ** 2 - n_samples)
-        bandwidth /= self.kernel_mul ** (self.kernel_num // 2)
-        bandwidth_list = [bandwidth * (self.kernel_mul ** i) for i in range(self.kernel_num)]
-        kernel_val = [torch.exp(-L2_distance / bandwidth_tmp) for bandwidth_tmp in bandwidth_list]
-        return sum(kernel_val)
-
-    def mmd(self, src_features, tar_features):
-        batch_size = int(src_features.size()[0])
-        kernel = self.guassian_kernel(src_features, tar_features)
-        XX=kernel[:batch_size, :batch_size]
-        YY=kernel[batch_size:, batch_size:]
-        XY=kernel[:batch_size, batch_size:]
-        YX=kernel[batch_size:, :batch_size]
-        loss = torch.mean(XX + YY - XY - YX)
-        return loss
-
-    def mmd_linear(self, src_features, tar_features):
-        batch_size = int(src_features.size()[0])
-        kernel = self.guassian_kernel(src_features, tar_features)
-        loss = 0.0
-        for i in range(batch_size):
-            s1, s2 = i, (i + 1) % batch_size
-            t1, t2 = s1 + batch_size, s2 + batch_size
-            loss += (kernel[s1, s2] + kernel[t1, t2])
-            loss -= (kernel[s1, t2] + kernel[s2, t1])
-        return loss / float(batch_size)
-
-    def forward(self, src_features, tar_features):
-        if self.mmd_type == "mmd":
-            return self.mmd(src_features, tar_features)
-        elif self.mmd_type == "mmd_linear":
-            return self.mmd_linear(src_features, tar_features)
 
 class MD_MMD_Layer(nn.Module):
     def __init__(self, in_features, out_features, latent_domain_num=2):
@@ -111,15 +52,17 @@ class MD_MMD_Layer(nn.Module):
         return param_groups
 
 
-class MD_DAN(): # based on ResNet 50
+class MD_JAN(): # based on ResNet 50
     def __init__(self, cfg):
         self.cfg = cfg
 
         self.features = extractor_dict.ResNet50Extractor().to(DEVICE)
+        self.bottleneck_layer = nn.Linear(self.features.out_features(), 256).to(DEVICE)
         self.classifier = MD_MMD_Layer(
-                in_features=self.features.out_features(),
+                in_features=256,
                 out_features=cfg.num_class,
                 latent_domain_num=self.cfg.latent_domain_num).to(DEVICE)
+        self.softmax = nn.Softmax(dim=1).to(DEVICE)
 
     def train(self):
         start_time = time.time()
@@ -134,10 +77,11 @@ class MD_DAN(): # based on ResNet 50
         #loss
         classifier_ciriterion = nn.CrossEntropyLoss()
         entropy_ciriterion = EntropyLoss()
-        MMD_ciriterion = MMDLoss()
+        JMMD_ciriterion = JMMDLoss()
 
         optimizer = optim.Adam(
                 self.features.get_param_groups(self.cfg.learning_rate) +
+                [{"params": self.bottleneck_layer.parameters(), "lr": self.cfg.new_layer_learning_rate}] + \
                 self.classifier.get_param_groups(self.cfg.new_layer_learning_rate),
                 weight_decay = 0.01)
 
@@ -187,15 +131,18 @@ class MD_DAN(): # based on ResNet 50
             optimizer.zero_grad()
 
             # forward
-            src_features = self.features(X_src)
+            src_features = self.bottleneck_layer(self.features(X_src))
             src_outputs, src_inter_MMD_loss  = self.classifier(src_features)
-            tar_features = self.features(X_tar)
+            src_softmax = self.softmax(src_outputs)
+
+            tar_features = self.bottleneck_layer(self.features(X_tar))
             tar_outputs, tar_inter_MMD_loss  = self.classifier(tar_features)
+            tar_softmax = self.softmax(tar_outputs)
 
             # loss
             classifier_loss = classifier_ciriterion(src_outputs, y_src)
             entropy_loss = entropy_ciriterion(tar_outputs)
-            intra_MMD_loss = MMD_ciriterion(src_features, tar_features)
+            intra_MMD_loss = JMMD_ciriterion([src_features, src_softmax], [tar_features, tar_softmax])
 
             #loss_factor = 2.0 / (1.0 + math.exp(-10 * _iter / self.cfg.max_iter)) - 1.0
             loss_factor = 1.0
@@ -226,27 +173,54 @@ class MD_DAN(): # based on ResNet 50
         return best_tar_acc
 
     def eval(self, x):
-        pass
+        return self.classifier(self.features(x))
 
 
-def main():
+def combine_exp():
+    from configs.MD_JAN_config import cfg
+    print("configs:\n", cfg)
+    acc_dict = {}
+    ave = 0.0
+    for src, tar in zip([["amazon", "webcam"], ["amazon", "dslr"], ["webcam", "dslr"]],[["dslr"],["webcam"], ["amazon"]]):
+        print("src: ", src, "tar: ", tar)
+        cfg.src, cfg.tar = src, tar
+        jan = MD_JAN(cfg)
+        best_tar_acc = jan.train()
+        ave += best_tar_acc
+        acc_dict[" ".join(src)+"->"+tar[0]] = best_tar_acc
+    print("configs:\n", cfg)
+    print(acc_dict)
+    ave /= 3.0
+    print("ave acc", ave)
+
+def every_exp():
     from configs.MD_DAN_config import cfg
     print("configs:\n", cfg)
     acc_dict = {}
     ave = 0.0
-    for src in ["amazon", "webcam", "dslr"]:
-        for tar in ["amazon", "webcam", "dslr"]:
+    for src in ["amazon", "dslr", "webcam"]:
+        for tar in ["amazon", "dslr", "webcam"]:
             if src == tar:
                 continue
+            print("src: ", src, "tar: ", tar)
             cfg.src, cfg.tar = [src], [tar]
-            dan = MD_DAN(cfg)
-            best_tar_acc = dan.train()
+            jan = MD_JAN(cfg)
+            best_tar_acc = jan.train()
             ave += best_tar_acc
-            acc_dict[src+"->"+"tar"] = best_tar_acc
+            acc_dict[src+"->"+tar] = best_tar_acc
     print("configs:\n", cfg)
     print(acc_dict)
     ave /= 6.0
     print("ave acc", ave)
+
+def main():
+    #combine_exp()
+    #every_exp()
+    from configs.MD_DAN_config import cfg
+    print("configs:\n", cfg)
+    jan = MD_JAN(cfg)
+    jan.train()
+    print("configs:\n", cfg)
 
 
 if __name__ == "__main__":

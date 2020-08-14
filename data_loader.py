@@ -37,16 +37,16 @@ def office31_loader(cfg, val=True):
     data_src = ConcatDataset(datasets_src)
     data_tar = ConcatDataset(datasets_tar)
 
-    tar_loader = DataLoader(data_tar, batch_size=cfg.batch_size, shuffle=True, drop_last=True, num_workers=1, pin_memory=True)
+    tar_loader = DataLoader(data_tar, batch_size=cfg.batch_size, shuffle=True, drop_last=True, num_workers=4, pin_memory=True)
     if val:
         train_size = int(cfg.src_val_ratio*len(data_src))
         val_size   = len(data_src) - train_size
         data_train, data_val = random_split(data_src, [train_size, val_size])
-        train_loader = DataLoader(data_train, batch_size=cfg.batch_size, shuffle=True, drop_last=True, num_workers=1, pin_memory=True)
-        val_loader   = DataLoader(data_val, batch_size=cfg.batch_size, shuffle=True, drop_last=True, num_workers=1, pin_memory=True)
+        train_loader = DataLoader(data_train, batch_size=cfg.batch_size, shuffle=True, drop_last=True, num_workers=4, pin_memory=True)
+        val_loader   = DataLoader(data_val, batch_size=cfg.batch_size, shuffle=True, drop_last=True, num_workers=4, pin_memory=True)
         return train_loader, val_loader, tar_loader
     else:
-        train_loader = DataLoader(data_src, batch_size=cfg.batch_size, shuffle=True, drop_last=True, num_workers=1, pin_memory=True)
+        train_loader = DataLoader(data_src, batch_size=cfg.batch_size, shuffle=True, drop_last=True, num_workers=4, pin_memory=True)
         return train_loader, tar_loader
 
 
