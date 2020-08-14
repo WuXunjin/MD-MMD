@@ -2,6 +2,7 @@
 
 from network import extractor_dict, classifier_dict
 import time
+import math
 import torch
 from torch import nn, optim
 from data_loader import data_loader_dict
@@ -18,11 +19,53 @@ class EntropyLoss(nn.Module):
         return entropy
 
 class MMDLoss(nn.Module):
-    def __init__(self):
+    def __init__(self, kernel_mul=2.0, kernel_num=5, fix_sigma=None):
         super(MMDLoss, self).__init__()
+        self.kernel_mul = 2.0
+        self.kernel_num = kernel_num
+        self.fix_sigma  = fix_sigma
+
+    def guassian_kernel(self, src_features, tar_features):
+        n_samples = int(src_features.size()[0] + tar_features.size()[0])
+        total = torch.cat([src_features, tar_features], dim=0)
+        double_batch = int(total.size()[0])
+        features_num = int(total.size()[1])
+        total0 = total.unsqueeze(0).expand(double_batch, double_batch, features_num)
+        total1 = total.unsqueeze(1).expand(double_batch, double_batch, features_num)
+        L2_distance = ((total0 - total1) ** 2).sum(2)
+        if self.fix_sigma:
+            bandwidth = self.fix_sigma
+        else:
+            bandwidth = torch.sum(L2_distance.data) / (n_samples ** 2 - n_samples)
+        bandwidth /= self.kernel_mul ** (self.kernel_num // 2)
+        bandwidth_list = [bandwidth * (self.kernel_mul ** i) for i in range(self.kernel_num)]
+        kernel_val = [torch.exp(-L2_distance / bandwidth_tmp) for bandwidth_tmp in bandwidth_list]
+        return sum(kernel_val)
+
+    def mmd(self, src_features, tar_features):
+        batch_size = int(src_features.size()[0])
+        kernel = self.guassian_kernel(src_features, tar_features)
+        XX=kernel[:batch_size, :batch_size]
+        YY=kernel[batch_size:, batch_size:]
+        XY=kernel[:batch_size, batch_size:]
+        YX=kernel[batch_size:, :batch_size]
+        loss = torch.mean(XX + YY - XY - YX)
+        return loss
+
+    def mmd_linear(self, src_features, tar_features):
+        batch_size = int(src_features.size()[0])
+        kernel = self.guassian_kernel(src_features, tar_features)
+        loss = 0.0
+        for i in range(batch_size):
+            s1, s2 = i, (i + 1) % batch_size
+            t1, t2 = s1 + batch_size, s2 + batch_size
+            loss += (kernel[s1, s2] + kernel[t1, t2])
+            loss -= (kernel[s1, t2] + kernel[s2, t1])
+        return loss / float(batch_size)
 
     def forward(self, src_features, tar_features):
-        return 0.0
+        return self.mmd(src_features, tar_features)
+        #return self.mmd_linear(src_features, tar_features)
 
 class DAN(): # based on ResNet 50
     def __init__(self, cfg):
@@ -68,9 +111,11 @@ class DAN(): # based on ResNet 50
         move_average_loss = 0.0
         move_factor = 0.9
         for _iter in range(self.cfg.max_iter):
-            #inv_lr_scheduler(optimizer, _iter)
+            # lr scheduler
             scheduler.step()
+            #inv_lr_scheduler(optimizer, _iter)
             #cos_lr_scheduler(optimizer, _iter, self.cfg.max_iter)
+
             if _iter % src_iter_len == 0:
                 src_iter = iter(src_loader)
 
@@ -112,13 +157,14 @@ class DAN(): # based on ResNet 50
 
             # loss
             classifier_loss = classifier_ciriterion(src_outputs, y_src)
-            entropy_loss = -entropy_ciriterion(tar_outputs)
+            entropy_loss = entropy_ciriterion(tar_outputs)
             MMD_loss = MMD_ciriterion(src_features, tar_features)
 
-            #loss = classifier_loss
+            loss_factor = 2.0 / (1.0 + math.exp(-10 * _iter / self.cfg.max_iter)) - 1.0
+            #loss_factor = 1.0
             loss = classifier_loss + \
-                   entropy_loss * self.cfg.entropy_loss_weight * (self.cfg.max_iter - _iter) / self.cfg.max_iter + \
-                   MMD_loss * self.cfg.MMD_loss_weight
+                   entropy_loss * self.cfg.entropy_loss_weight * loss_factor + \
+                   MMD_loss * self.cfg.MMD_loss_weight * loss_factor
 
             # optimize
             loss.backward()
@@ -132,8 +178,8 @@ class DAN(): # based on ResNet 50
             pred_tar = tar_outputs.argmax(dim=1)
             epoch_src_correct += (y_src == pred_src).double().sum().item()
             epoch_tar_correct += (y_tar == pred_tar).double().sum().item()
-            print("Iter[{:02d}/{:03d}] Loss[move_average_loss: {:.4f}, iter_loss: {:.4f}]".format(
-                _iter, self.cfg.max_iter, move_average_loss, iter_loss))
+            print("Iter[{:02d}/{:03d}] Loss[M-Ave: {:.4f}\titer:{:.4f}\tCla:{:.4f}\tEnt:{:.4f}\tMMD:{:.4f}]".format(
+                _iter, self.cfg.max_iter, move_average_loss, iter_loss, classifier_loss, entropy_loss, MMD_loss))
 
         time_pass = time.time() - start_time
         print("Train finish in {:.0f}m {:.0f}s".format(time_pass // 60, time_pass % 60))
@@ -147,6 +193,8 @@ def main():
     print("configs:\n", cfg)
     dan = DAN(cfg)
     dan.train()
+    print("configs:\n", cfg)
+
 
 if __name__ == "__main__":
     main()
