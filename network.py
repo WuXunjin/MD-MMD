@@ -1,4 +1,4 @@
-#zzcoding=utf-8
+#coding=utf-8
 
 from torch import nn, autograd
 from torchvision import models

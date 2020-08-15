@@ -75,8 +75,9 @@ class DAN(): # based on ResNet 50
         self.cfg = cfg
 
         self.features = extractor_dict.ResNet50Extractor().to(DEVICE)
+        self.bottleneck_layer = nn.Linear(self.features.out_features(), 256).to(DEVICE)
         self.classifier = classifier_dict.SingleClassifier(
-                in_features=self.features.out_features(),
+                in_features=256,
                 num_class=cfg.num_class).to(DEVICE)
 
     def train(self):
@@ -100,7 +101,8 @@ class DAN(): # based on ResNet 50
         #        self.classifier.get_param_groups(self.cfg.new_layer_learning_rate),
         #        momentum=self.cfg.momentum)
         optimizer = optim.Adam(
-                self.features.get_param_groups(self.cfg.learning_rate) +
+                self.features.get_param_groups(self.cfg.learning_rate) + \
+                [{"params": self.bottleneck_layer.parameters(), "lr": self.cfg.new_layer_learning_rate}] + \
                 self.classifier.get_param_groups(self.cfg.new_layer_learning_rate),
                 weight_decay = 0.01)
 
@@ -153,9 +155,9 @@ class DAN(): # based on ResNet 50
             optimizer.zero_grad()
 
             # forward
-            src_features = self.features(X_src)
+            src_features = self.bottleneck_layer(self.features(X_src))
             src_outputs  = self.classifier(src_features)
-            tar_features = self.features(X_tar)
+            tar_features = self.bottleneck_layer(self.features(X_tar))
             tar_outputs  = self.classifier(tar_features)
 
             # loss
@@ -166,7 +168,7 @@ class DAN(): # based on ResNet 50
             loss_factor = 2.0 / (1.0 + math.exp(-10 * _iter / self.cfg.max_iter)) - 1.0
             #loss_factor = 1.0
             loss = classifier_loss + \
-                   entropy_loss * self.cfg.entropy_loss_weight * loss_factor + \
+                   entropy_loss * self.cfg.entropy_loss_weight * loss_factor * 0.0 + \
                    MMD_loss * self.cfg.MMD_loss_weight * loss_factor
 
             # optimize
@@ -186,6 +188,7 @@ class DAN(): # based on ResNet 50
 
         time_pass = time.time() - start_time
         print("Train finish in {:.0f}m {:.0f}s".format(time_pass // 60, time_pass % 60))
+        return best_tar_acc
 
     def eval(self, x):
         pass
