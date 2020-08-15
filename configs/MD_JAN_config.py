@@ -26,13 +26,13 @@ cfg.max_iter = 2000
 #loss
 cfg.mmd_type = "jmmd"
 cfg.entropy_loss_weight = 1.0
-cfg.intra_MMD_loss_weight = 2.0
+cfg.intra_MMD_loss_weight = 3.0
 cfg.inter_MMD_loss_weight = 0.1
 cfg.loss_factor_decay = 0
 
 
 # dataloader
-cfg.batch_size = 128
+cfg.batch_size = 64
 cfg.src_val_ratio = 0.8
 
 
