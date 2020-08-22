@@ -147,7 +147,7 @@ class ClusterLoss1(nn.Module): # 直接对输出的features进行聚类
         pro_sum = ((cluster_loss_matrix / self.alpha + 1.0) ** ((self.alpha + 1.0) / 2.0)).sum(2)
         pro_belong = (cluster_loss_matrix / self.alpha + 1.0) ** ((self.alpha + 1.0) / 2.0)
         pro_belong /= pro_sum.unsqueeze(2).expand(batch_size, domain_num, domain_num)
-        cluster_loss = torch.log(pro_belong).sum(0)
+        cluster_loss = torch.log(pro_belong).mean(0)
         sig_matrix = torch.Tensor(np.diag([-2.0] * domain_num) + np.ones((domain_num, domain_num))).to(DEVICE)
         cluster_loss = (cluster_loss_matrix * sig_matrix).mean()
         return cluster_loss

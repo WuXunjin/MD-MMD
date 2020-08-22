@@ -41,6 +41,50 @@ class AlexNetExtractor(nn.Module):
                 {"params": self.avgpool.parameters(), "lr": learning_rate}]
         return param_groups
 
+class AlexNetExtractor2(nn.Module):
+    def __init__(self):
+        super(AlexNetExtractor2, self).__init__()
+        model = models.alexnet(pretrained=True)
+        self.features = model.features
+        self.avgpool = model.avgpool
+
+        fc1 = nn.Linear(9216, 4096)
+        fc1.bias = model.classifier[1].bias
+        fc1.weight = model.classifier[1].weight
+
+        fc2 = nn.Linear(4096, 4096)
+        fc2.bias = model.classifier[4].bias
+        fc2.weight = model.classifier[4].weight
+
+        self.classifier = nn.Sequential(
+                nn.Dropout(),
+                fc1,
+                nn.ReLU(True),
+                nn.Dropout(),
+                fc2,
+                nn.ReLU(True)
+                )
+
+    def forward(self, x):
+        x = self.features(x)
+        x = self.avgpool(x)
+        x = x.view(x.shape[0], -1)
+        x = self.classifier(x)
+        return x
+
+    def out_features(self):
+        return 4096
+
+    def get_param_groups(self, learning_rate):
+        #param_groups = []
+        param_groups = [
+            {"params": self.features.parameters(), "lr": learning_rate},
+            {"params": self.avgpool.parameters(), "lr": learning_rate}]
+
+        for i in range(6):
+            param_groups += [{"params": self.classifier[i].parameters(), "lr": learning_rate}]
+        return param_groups
+
 class ResNet18Extractor(nn.Module):
     def __init__(self):
         super(ResNet18Extractor, self).__init__()
@@ -230,8 +274,9 @@ class InceptionExtractor(nn.Module):
         self.features.fc = nn.Identity()
 
     def forward(self, x):
-        x = self.features(x)
-        x = x.view(x.shape[0], -1)
+        with torch.no_grad():
+            x = self.features(x)
+            x = x.view(x.shape[0], -1)
         return x
 
     def out_features(self):
@@ -242,6 +287,7 @@ class InceptionExtractor(nn.Module):
 
 extractor_dict = Munch({
     "AlexNetExtractor":   AlexNetExtractor,
+    "AlexNetExtractor2":   AlexNetExtractor2,
     "ResNet18Extractor":  ResNet18Extractor,
     "ResNet34Extractor":  ResNet34Extractor,
     "ResNet50Extractor":  ResNet50Extractor,
@@ -301,8 +347,7 @@ class AlexNetClassifier(nn.Module):
         param_groups += [{"params": self.classifier[-1].parameters(), "lr": new_layer_learning_rate}]
         return param_groups
 
-
 classifier_dict = Munch({
     "SingleClassifier": SingleClassifier,
-    "AlexNetClassifier": AlexNetClassifier
+    "AlexNetClassifier": AlexNetClassifier,
     })

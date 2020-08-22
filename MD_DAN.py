@@ -50,7 +50,10 @@ class MD_DAN(): # based on ResNet 50
     def __init__(self, cfg):
         self.cfg = cfg
 
-        self.features = extractor_dict.ResNet50Extractor().to(DEVICE)
+        #self.features = extractor_dict.ResNet50Extractor().to(DEVICE)
+        #self.features = extractor_dict.ResNet152Extractor().to(DEVICE)
+        self.features = extractor_dict.ResNet101Extractor().to(DEVICE)
+        #self.features = extractor_dict.AlexNetExtractor2().to(DEVICE)
         self.bottleneck_layer = MD_MMD_Layer(in_features=self.features.out_features(),
                 out_features=256,
                 latent_domain_num=self.cfg.latent_domain_num).to(DEVICE)
@@ -160,6 +163,7 @@ class MD_DAN(): # based on ResNet 50
             # optimize
             loss.backward()
             optimizer.step()
+
             # stat
             iter_loss = loss.item()
             move_average_loss = move_average_loss * move_factor + iter_loss * (1.0 - move_factor)
@@ -176,7 +180,7 @@ class MD_DAN(): # based on ResNet 50
                 _iter, self.cfg.max_iter, src_cluster_loss, tar_cluster_loss))
         time_pass = time.time() - start_time
         print("Train finish in {:.0f}m {:.0f}s".format(time_pass // 60, time_pass % 60))
-        return best_tar_acc
+        return best_tar_test_acc
 
     def eval(self, x):
         with torch.no_grad():
@@ -191,26 +195,33 @@ def combine_exp():
     acc_dict = {}
     ave = 0.0
     #datasets_list = ["art_painting", "cartoon", "photo", "sketch"]
-    #datasets_list = ["amazon", "dslr", "webcam", "caltech"]
-    datasets_list = ["amazon", "dslr", "webcam"]
+    datasets_list = ["amazon", "dslr", "webcam", "caltech"]
+    #datasets_list = ["amazon", "dslr", "webcam"]
+    #A = "art_painting"
+    #C = "cartoon"
+    #S = "sketch"
+    #P = "photo"
+    #src_list = [[C,S],[A,S],[A,C],[S,P],[C,P],[A,P]]
+    #tar_list = [[A,P],[C,P],[S,P],[A,C],[A,S],[C,S]]
+    #for src, tar in zip(src_list, tar_list):
     for tar, src in one_vs_all_split(datasets_list):
         print("src: ", src, "tar: ", tar)
         cfg.src, cfg.tar = src, tar
         dan = MD_DAN(cfg)
         best_tar_acc = dan.train()
         ave += best_tar_acc
-        acc_dict[" ".join(src)+"->"+tar[0]] = best_tar_acc
+        acc_dict[" ".join(src)+"->"+" ".join(tar)] = best_tar_acc
     print("configs:\n", cfg)
     print(acc_dict)
-    ave /= len(datasets_list)
-    print("ave acc", ave)
+    #ave /= len(datasets_list)
+    #print("ave acc", ave)
 
 def every_exp():
     from configs.MD_DAN_config import cfg
     print("configs:\n", cfg)
     acc_dict = {}
     ave = 0.0
-    datasets_list = ["amazon", "dslr", "webcam", "caltech"]
+    datasets_list = ["amazon", "dslr", "webcam"]
     for src in datasets_list:
         for tar in datasets_list:
             if src == tar:
@@ -223,7 +234,7 @@ def every_exp():
             acc_dict[src+"->"+tar] = best_tar_acc
     print("configs:\n", cfg)
     print(acc_dict)
-    ave /= (len(datasets_list) * (len(datasets_list) - 1)) / 2.0
+    ave /= ((len(datasets_list) * (len(datasets_list) - 1)) / 2.0)
     print("ave acc", ave)
 
 def main():
