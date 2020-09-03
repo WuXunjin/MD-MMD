@@ -1,116 +1,141 @@
 #coding=utf-8
 
+from network import extractor_dict, classifier_dict
 import time
-import torchvision
+import math
 import torch
 from torch import nn, optim
-from network import extractor_dict, classifier_dict
 from data_loader import data_loader_dict
-from utils import inv_lr_scheduler
-#from tensorboardX import SummaryWriter
+from utils import one_vs_all_split
+from loss import EntropyLoss, MMDLoss, ClusterLoss1
+import numpy as np
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available else "cpu")
 
-class Net(nn.Module):
+class Net():
     def __init__(self, cfg):
-        super(Net, self).__init__()
         self.cfg = cfg
+        self.features = extractor_dict[cfg.extractor]().to(DEVICE)
+        self.classifier = classifier_dict[cfg.classifier](in_features=self.features.out_features(),
+            num_class=cfg.num_class).to(DEVICE)
 
-        if self.cfg.network == "alexnet":
-            self.features = extractor_dict.AlexNetExtractor()
-            self.classifier = classifier_dict.AlexNetClassifier(in_features=self.features.out_features(), num_class=cfg.num_class)
-        elif self.cfg.network == "resnet18":
-            self.features = extractor_dict.ResNet18Extractor()
-            self.classifier = classifier_dict.SingleClassifier(in_features=self.features.out_features(), num_class=cfg.num_class)
-        elif self.cfg.network == "resnet34":
-            self.features = extractor_dict.ResNet34Extractor()
-            self.classifier = classifier_dict.SingleClassifier(in_features=self.features.out_features(), num_class=cfg.num_class)
-        elif self.cfg.network == "resnet50":
-            self.features = extractor_dict.ResNet50Extractor()
-            self.classifier = classifier_dict.SingleClassifier(in_features=self.features.out_features(), num_class=cfg.num_class)
-        elif self.cfg.network == "resnet101":
-            self.features = extractor_dict.ResNet101Extractor()
-            self.classifier = classifier_dict.SingleClassifier(in_features=self.features.out_features(), num_class=cfg.num_class)
-        elif self.cfg.network == "resnet152":
-            self.features = extractor_dict.ResNet152Extractor()
-            self.classifier = classifier_dict.SingleClassifier(in_features=self.features.out_features(), num_class=cfg.num_class)
-        elif self.cfg.network == "inception":
-            self.features = extractor_dict.InceptionExtractor()
-            self.classifier = classifier_dict.SingleClassifier(in_features=self.features.out_features(), num_class=cfg.num_class)
+    def test(self, tar_test_loader):
+        correct = 0
+        for X, y in tar_test_loader:
+            X, y = X.to(DEVICE), y.to(DEVICE)
+            outputs = self.eval(X)
+            preds = outputs.argmax(dim=1)
+            correct += (y == preds).double().sum().item()
+        return correct / len(tar_test_loader.dataset)
 
-
-        self.param_groups = self.features.get_param_groups(cfg.learning_rate)
-        if cfg.network == "alexnet":
-            self.param_groups += self.classifier.get_param_groups(cfg.learning_rate, cfg.new_layer_learning_rate)
-        else:
-            self.param_groups += self.classifier.get_param_groups(cfg.new_layer_learning_rate)
-
-
-    def forward(self, x):
-        x = self.features(x)
-        x = self.classifier(x)
+    def eval(self, x):
+        with torch.no_grad():
+            x = self.classifier(self.features(x))
         return x
 
-    def get_param_groups(self):
-        return self.param_groups
+    def train(self):
+        start_time = time.time()
+        self.features.train()
+        self.classifier.train()
+
+        # prepare data
+        src_loader, _, tar_test_loader = data_loader_dict[self.cfg.dataset](self.cfg, val=False)
+        dataloaders = {"src": src_loader, "tar": tar_test_loader}
+        print("data_size[src: {:.0f}, tar: {:.0f}]".format(len(src_loader.dataset), len(tar_test_loader.dataset)))
+
+        #loss
+        classifier_ciriterion = nn.CrossEntropyLoss()
+
+        param_groups = self.features.get_param_groups(self.cfg.learning_rate)
+        if self.cfg.extractor == "AlexNetExtractor":
+            param_groups += self.classifier.get_param_groups(self.cfg.learning_rate, self.cfg.new_layer_learning_rate)
+        else:
+            param_groups += self.classifier.get_param_groups(self.cfg.new_layer_learning_rate)
+        optimizer = optim.Adam(param_groups, weight_decay = 0.01)
+
+        lr_scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=self.cfg.max_epoch)
+
+        # train
+        best_acc = {"src":0.0, "tar":0.0}
+        for epoch in range(self.cfg.max_epoch):
+            epoch_loss = 0.0
+            epoch_correct = 0
+            sample_num = 0
+            for phase in ["src", "tar"]:
+                for X, y in dataloaders[phase]:
+                    X, y = X.to(DEVICE), y.to(DEVICE)
+                    sample_num += X.size(0)
+                    optimizer.zero_grad()
+                    with torch.set_grad_enabled(phase == "src"):
+                        outputs = self.classifier(self.features(X))
+                        loss = classifier_ciriterion(outputs, y)
+                    preds = outputs.argmax(dim=1)
+                    if phase == "src":
+                        loss.backward()
+                        optimizer.step()
+                        lr_scheduler.step()
+                    epoch_loss += loss.item() * X.size(0)
+                    epoch_correct += (preds == y).double().sum().item()
+                epoch_loss /= sample_num
+                epoch_acc = epoch_correct / sample_num
+                if epoch_acc > best_acc[phase]:
+                    best_acc[phase] = epoch_acc
+                print("Epoch[{:02d}/{:03d}]---{} loss: {:.4f} acc: {:.4f} best acc: {:.4f}".format(
+                    epoch, self.cfg.max_epoch, phase, loss, epoch_acc, best_acc[phase]))
+            print()
+        return best_acc["tar"]
 
 
-def fine_tune(net, data_loaders, cfg):
-    start_time = time.time()
-    best_tar_acc, best_val_acc, tar_acc_when_best_val = 0.0, 0.0, 0.0
-    classifier_ciriterion = nn.CrossEntropyLoss()
-    optimizer = optim.SGD(net.get_param_groups(), momentum=cfg.momentum)
-    for epoch in range(1, cfg.max_epoch + 1):
-        inv_lr_scheduler(optimizer, epoch)
-        acc_dict = {}
-        for phase in ["src", "val", "tar"]:
-            if phase == "src":
-                net.train()
-            else:
-                net.eval()
-            epoch_loss, epoch_correct = 0, 0
-            for X, y in data_loaders[phase]:
-                X, y = X.to(DEVICE), y.to(DEVICE)
-                optimizer.zero_grad()
-                with torch.set_grad_enabled(phase == "src"):
-                    outputs = net(X)
-                    loss = classifier_ciriterion(outputs, y)
-                preds = outputs.argmax(dim=1)
-                if phase == "src":
-                    loss.backward()
-                    optimizer.step()
-                epoch_loss += loss.item() * X.size(0)
-                epoch_correct += (preds == y).double().sum().item()
-            epoch_loss /= len(data_loaders[phase].dataset)
-            epoch_acc = epoch_correct / len(data_loaders[phase].dataset)
-            acc_dict[phase] = epoch_acc
-            print("Epoch[{:02d}/{:03d}]---{}, loss: {:.6f}, acc: {:.4f}".format(
-                epoch, cfg.max_epoch, phase, epoch_loss, epoch_acc))
-        if acc_dict["tar"] > best_tar_acc:
-            best_tar_acc = acc_dict["tar"]
-        if acc_dict["val"] > best_val_acc:
-            best_val_acc = acc_dict["val"]
-            tar_acc_when_best_val = acc_dict["tar"]
-        print("Acc --- best tar: {:.4f}, best val: {:.4f}, tar when best val: {:.4f}".format(
-            best_tar_acc, best_val_acc, tar_acc_when_best_val))
-        print()
-    time_pass = time.time() - start_time
+def combine_exp():
+    from configs.fine_tune_config import cfg
+    print("configs:\n", cfg)
+    best_acc_dict = {}
+    ave = 0.0
+    datasets_list = ["amazon", "dslr", "webcam"]
+    for tar, src in one_vs_all_split(datasets_list):
+        print("src: ", src, "tar: ", tar)
+        cfg.src, cfg.tar = src, tar
+        net = Net(cfg)
+        best_tar_acc = net.train()
+        best_acc_dict[" ".join(src)+"->"+" ".join(tar)] = best_tar_acc
+    print("configs:\n", cfg)
+    print("best acc " + "*" * 60)
+    print(best_acc_dict)
+    ave /= len(datasets_list)
 
-    print("Train finish in {:.0f}m {:.0f}s".format(time_pass // 60, time_pass % 60))
+def every_exp():
+    from configs.fine_tune_config import cfg
+    print("configs:\n", cfg)
+    best_acc_dict = {}
+    stop_acc_dict = {}
+    ave = 0.0
+    datasets_list = ["amazon", "dslr", "webcam"]
+    for src in datasets_list:
+        for tar in datasets_list:
+            if src == tar:
+                continue
+            print("src: ", src, "tar: ", tar)
+            cfg.src, cfg.tar = [src], [tar]
+            net = Net(cfg)
+            best_tar_acc = net.train()
+            ave += best_tar_acc
+            best_acc_dict[src+"->"+tar] = best_tar_acc
+    print("configs:\n", cfg)
+    print("best acc " + "*" * 60)
+    print(best_acc_dict)
+    ave /= ((len(datasets_list) * (len(datasets_list) - 1)) / 2.0)
+    print("best ave acc", ave)
 
 def main():
-    from configs.fine_tune_config import cfg
-    print("config:\n", cfg)
-    print("-" * 60)
-    train_loader, val_loader, tar_loader = data_loader_dict[cfg.dataset](cfg)
-    print("dataset:", cfg.dataset)
-    print("src_train: ", len(train_loader.dataset), "src_val: ", len(val_loader.dataset), "tar: ", len(tar_loader.dataset))
-    net = Net(cfg).to(DEVICE)
-    #print("Network:\n", net)
-    print("-" * 60)
-
-    fine_tune(net, {"src": train_loader, "val": val_loader, "tar": tar_loader}, cfg)
-    print("config:\n", cfg)
+    combine_exp()
+    #every_exp()
+    return
+    #from configs.MD_DAN_config import cfg
+    #print("configs:\n", cfg)
+    #dan = MD_DAN(cfg)
+    #dan.train()
+    #print("configs:\n", cfg)
 
 if __name__ == "__main__":
     main()
+

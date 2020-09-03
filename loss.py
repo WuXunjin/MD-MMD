@@ -130,6 +130,26 @@ class JMMDLoss(nn.Module):
         elif self.mmd_type == "jmmd_linear":
             return self.jmmd_linear(src_features_list, tar_features_list)
 
+class ClusterLoss(nn.Module): # 对输出的features进行聚类
+    def __init__(self, alpha=1.0):
+        super(ClusterLoss, self).__init__()
+        self.alpha = alpha
+
+    def forward(self, stack_outputs, center,latent_domain_label):
+        (batch_size, features_num, domain_num) = stack_outputs.size()
+        cluster_loss_matrix = ((stack_outputs.unsqueeze(3).expand(
+            batch_size, features_num, domain_num, domain_num) - \
+            (center.unsqueeze(0).expand(batch_size, features_num, domain_num)).unsqueeze(
+                2).expand(batch_size, features_num, domain_num, domain_num)) ** 2.0).sum(1)
+        pro_sum = ((cluster_loss_matrix / self.alpha + 1.0) ** (-(self.alpha + 1.0) / 2.0)).sum(2)
+        pro_belong = (cluster_loss_matrix / self.alpha + 1.0) ** (-(self.alpha + 1.0) / 2.0)
+        pro_belong /= pro_sum.unsqueeze(2).expand(batch_size, domain_num, domain_num)
+        cluster_loss = torch.log(pro_belong).mean(0)
+        sig_matrix = torch.Tensor(np.diag([-2.0] * domain_num) + np.ones((domain_num, domain_num))).to(DEVICE)
+        cluster_loss = (cluster_loss_matrix * sig_matrix).mean()
+        return cluster_loss
+
+
 
 class ClusterLoss1(nn.Module): # 直接对输出的features进行聚类
     def __init__(self, alpha=1.0):
@@ -144,8 +164,8 @@ class ClusterLoss1(nn.Module): # 直接对输出的features进行聚类
             batch_size, features_num, domain_num, domain_num) - \
             (center.unsqueeze(0).expand(batch_size, features_num, domain_num)).unsqueeze(
                 2).expand(batch_size, features_num, domain_num, domain_num)) ** 2.0).sum(1)
-        pro_sum = ((cluster_loss_matrix / self.alpha + 1.0) ** ((self.alpha + 1.0) / 2.0)).sum(2)
-        pro_belong = (cluster_loss_matrix / self.alpha + 1.0) ** ((self.alpha + 1.0) / 2.0)
+        pro_sum = ((cluster_loss_matrix / self.alpha + 1.0) ** (-(self.alpha + 1.0) / 2.0)).sum(2)
+        pro_belong = (cluster_loss_matrix / self.alpha + 1.0) ** (-(self.alpha + 1.0) / 2.0)
         pro_belong /= pro_sum.unsqueeze(2).expand(batch_size, domain_num, domain_num)
         cluster_loss = torch.log(pro_belong).mean(0)
         sig_matrix = torch.Tensor(np.diag([-2.0] * domain_num) + np.ones((domain_num, domain_num))).to(DEVICE)

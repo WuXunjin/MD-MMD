@@ -5,7 +5,8 @@ import torch
 from torch.utils.data import ConcatDataset, DataLoader, random_split
 
 def office31_loader(cfg, val=True):
-    img_size = 299 if cfg.network == "inception" else 224
+    #img_size = 299 if cfg.network == "inception" else 224
+    img_size = 224
     train_transform = transforms.Compose([
         transforms.Resize([256,256]),
         transforms.RandomCrop(224),
@@ -57,16 +58,17 @@ def digits_loader(cfg, val=True):
     pass
 
 def PACS_loader(cfg, val=True):
-    img_size = 299 if cfg.network == "inception" else 224
+    #img_size = 299 if cfg.network == "inception" else 224
+    img_size = 224
     train_transform = transforms.Compose([
         transforms.Resize([256,256]),
         transforms.RandomCrop(224),
         #transforms.RandomResizedCrop(img_size),
         transforms.RandomHorizontalFlip(),
-        #transforms.RandomVerticalFlip(),
+        transforms.RandomVerticalFlip(),
         transforms.ToTensor(),
         transforms.Normalize(
-            mean=[0.7609, 0.7414, 0.7128],
+            mean=[0.406, 0.457, 0.480],
             std =[0.3042, 0.3135, 0.3423 ]
             )
         ])
@@ -75,7 +77,8 @@ def PACS_loader(cfg, val=True):
         transforms.Resize([img_size, img_size]),
         transforms.ToTensor(),
         transforms.Normalize(
-            mean=[0.7609, 0.7414, 0.7128],
+            mean=[0.406, 0.457, 0.480],
+        #    mean=[0.7609, 0.7414, 0.7128],
             std =[0.3042, 0.3135, 0.3423 ]
             )
         ])
