@@ -383,6 +383,7 @@ classifier_dict = Munch({
 class MDCL(nn.Module):
     def __init__(self, in_features, out_features, latent_domain_num=2):
         super(MDCL, self).__init__()
+        DEVICE = torch.device("cuda" if torch.cuda.is_available else "cpu")
         self.latent_domain_num = latent_domain_num
         self.in_features, self.out_features = in_features, out_features
         self.aux_classifier = nn.Linear(self.in_features, self.latent_domain_num)
@@ -395,6 +396,8 @@ class MDCL(nn.Module):
         self.moving_factor = 0.9
 
     def forward(self, x):
+        if self.latent_domain_num == 1:
+            return self.layers[0](x), 0.0, 0.0
         #combine loss
         batch_size = int(x.size()[0])
         features_size = self.out_features
@@ -403,11 +406,11 @@ class MDCL(nn.Module):
         latent_domain_label = nn.functional.softmax(latent_domain, dim=1)
         outputs = [layer(x) for layer in self.layers]
         stack_outputs = torch.stack(outputs, dim=2)
-        now_center = (stack_outputs * latent_domain_label.unsqueeze(1).expand(
-            batch_size, features_size, self.latent_domain_num))
-        if torch.is_grad_enabled():
-            self.moving_center = now_center if self.moving_center is None \
-                                            else self.moving_center * self.moving_center + now_center * (1.0 - self.moving_factor)
+        #now_center = (stack_outputs * latent_domain_label.unsqueeze(1).expand(
+        #    batch_size, features_size, self.latent_domain_num))
+        #if torch.is_grad_enabled():
+        #    self.moving_center = now_center if self.moving_center is None \
+        #                                    else self.moving_center * self.moving_center + now_center * (1.0 - self.moving_factor)
         cluster_loss = self.cluster_ciriterion(stack_outputs, latent_domain_label)
 
         expand_latent_domain_label = latent_domain_label.unsqueeze(1).expand(batch_size, features_size, self.latent_domain_num)

@@ -47,7 +47,7 @@ class Net():
         classifier_ciriterion = nn.CrossEntropyLoss()
 
         param_groups = self.features.get_param_groups(self.cfg.learning_rate)
-        if self.cfg.extractor == "AlexNetExtractor":
+        if self.cfg.classifier == "AlexNetClassifier":
             param_groups += self.classifier.get_param_groups(self.cfg.learning_rate, self.cfg.new_layer_learning_rate)
         else:
             param_groups += self.classifier.get_param_groups(self.cfg.new_layer_learning_rate)
@@ -57,6 +57,7 @@ class Net():
 
         # train
         best_acc = {"src":0.0, "tar":0.0}
+        best_test_acc = 0.0
         for epoch in range(self.cfg.max_epoch):
             epoch_loss = 0.0
             epoch_correct = 0
@@ -82,6 +83,11 @@ class Net():
                     best_acc[phase] = epoch_acc
                 print("Epoch[{:02d}/{:03d}]---{} loss: {:.4f} acc: {:.4f} best acc: {:.4f}".format(
                     epoch, self.cfg.max_epoch, phase, loss, epoch_acc, best_acc[phase]))
+            test_acc = self.test(tar_test_loader)
+            if test_acc > best_test_acc:
+                best_test_acc = test_acc
+            print("Epoch[{:02d}/{:03d}]---test loss: {:.4f} acc: {:.4f} best acc: {:.4f}".format(
+                    epoch, self.cfg.max_epoch, 0.0, test_acc, best_test_acc))
             print()
         return best_acc["tar"]
 
